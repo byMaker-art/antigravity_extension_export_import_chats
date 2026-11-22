@@ -281,8 +281,15 @@ function activate(context) {
         try {
             const res = await runSyncScript(['import'], projectPath, 'Importing conversations into Antigravity IDE...');
             if (res.status === 'ok') {
-                vscode.window.showInformationMessage(`✓ ${res.message}`);
                 conversationsProvider.refresh();
+                const choice = await vscode.window.showInformationMessage(
+                    `✓ ${res.message}`,
+                    'Reload Window to Open Chat',
+                    'Later'
+                );
+                if (choice === 'Reload Window to Open Chat') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
             }
         } catch (e) {
             // Error already handled
@@ -298,14 +305,46 @@ function activate(context) {
         try {
             const res = await runSyncScript(['sync'], projectPath, 'Synchronizing Antigravity chats...');
             if (res.status === 'ok') {
-                vscode.window.showInformationMessage(`✓ ${res.message}`);
                 conversationsProvider.refresh();
+                const choice = await vscode.window.showInformationMessage(
+                    `✓ ${res.message}`,
+                    'Reload Window to Open Chat',
+                    'Later'
+                );
+                if (choice === 'Reload Window to Open Chat') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
             }
         } catch (e) {
             // Error already handled
         }
     });
     context.subscriptions.push(syncCmd);
+
+    // Command: Activate Chat in Panel
+    const activateChatCmd = vscode.commands.registerCommand('antigravity.activateChat', async (item) => {
+        if (!item || !item.conversation) return;
+        const projectPath = getWorkspacePath();
+        if (!projectPath) return;
+
+        const cid = item.conversation.conversation_id;
+        try {
+            const res = await runSyncScript(['activate', '--cid', cid], projectPath, 'Setting active conversation...');
+            if (res.status === 'ok') {
+                const choice = await vscode.window.showInformationMessage(
+                    `✓ Conversation selected. Reload window now to display in Chat panel?`,
+                    'Reload Window',
+                    'Later'
+                );
+                if (choice === 'Reload Window') {
+                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                }
+            }
+        } catch (e) {
+            // Handled
+        }
+    });
+    context.subscriptions.push(activateChatCmd);
 
     // Command: List / Refresh Chats
     const listCmd = vscode.commands.registerCommand('antigravity.listChats', () => {

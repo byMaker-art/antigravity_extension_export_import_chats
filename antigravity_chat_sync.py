@@ -10,6 +10,7 @@ Zero external dependencies - uses standard Python 3 libraries.
 
 import os
 import sys
+import glob
 import json
 import sqlite3
 import shutil
@@ -88,6 +89,45 @@ def replace_protobuf_uri(blob: bytes, old_uri: str, new_uri: str) -> bytes:
 def get_project_uri(project_dir: str) -> str:
     """Convert local project directory to Antigravity's workspace URI format."""
     return pathlib.Path(project_dir).resolve().as_uri()
+
+
+def update_ide_active_chat(project_dir: str, conversation_id: str) -> bool:
+    """
+    Update lastConversationId in Antigravity IDE workspaceStorage state.vscdb
+    so that upon window reload, the IDE automatically opens this conversation in the chat panel.
+    """
+    target_uri = get_project_uri(project_dir)
+    search_roots = [
+        os.path.expanduser("~/Library/Application Support/Antigravity IDE/User/workspaceStorage"),
+        os.path.expanduser("~/.config/Antigravity IDE/User/workspaceStorage"),
+        os.path.expandvars(r"%APPDATA%\Antigravity IDE\User\workspaceStorage")
+    ]
+
+    found = False
+    for root in search_roots:
+        if not os.path.exists(root):
+            continue
+        for ws in glob.glob(os.path.join(root, "*")):
+            ws_json = os.path.join(ws, "workspace.json")
+            vscdb = os.path.join(ws, "state.vscdb")
+            if not os.path.exists(ws_json) or not os.path.exists(vscdb):
+                continue
+            try:
+                with open(ws_json, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                folder_uri = data.get("folder", "")
+                if (target_uri.rstrip("/") == folder_uri.rstrip("/") or
+                    urllib.parse.unquote(target_uri).rstrip("/") == urllib.parse.unquote(folder_uri).rstrip("/")):
+                    conn = sqlite3.connect(vscdb)
+                    c = conn.cursor()
+                    val = json.dumps({"lastConversationId": conversation_id})
+                    c.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('google.google-antigravity', ?)", (val,))
+                    conn.commit()
+                    conn.close()
+                    found = True
+            except Exception:
+                pass
+    return found
 
 
 def ensure_gemini_dirs():
@@ -440,15 +480,24 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
     conn.commit()
     conn.close()
 
+    # Automatically set the latest imported conversation as active in IDE state
+    active_cid = None
+    if conversations:
+        active_cid = conversations[-1]["conversation_id"]
+        update_ide_active_chat(project_dir, active_cid)
+
     if as_json:
         print(json.dumps({
             "status": "ok",
-            "message": f"Successfully imported {imported_count} conversation(s) into this project.",
+            "message": f"Successfully imported {imported_count} conversation(s).",
             "imported_count": imported_count,
+            "active_conversation_id": active_cid,
+            "requires_reload": True,
             "target_uri": target_uri
         }, ensure_ascii=False, indent=2))
     else:
         print(f"\n[SUCCESS] Import complete! {imported_count} conversation(s) restored into Antigravity IDE.")
+        print("Note: Reload Antigravity IDE window (Cmd+Shift+P -> Developer: Reload Window) to show in chat panel.")
     return True
 
 
@@ -529,6 +578,12 @@ def main():
     sub_imp.add_argument("--from-dir", default="", help="Custom import folder (default: .antigravity_chats in project)")
     sub_imp.add_argument("--json", action="store_true", help="Output results in JSON format")
 
+    # activate
+    sub_act = subparsers.add_parser("activate", help="Set active conversation in IDE workspaceStorage")
+    sub_act.add_argument("--cid", required=True, help="Conversation ID to activate")
+    sub_act.add_argument("--dir", default=os.getcwd(), help="Project directory")
+    sub_act.add_argument("--json", action="store_true", help="Output result as JSON")
+
     # sync
     sub_sync = subparsers.add_parser("sync", help="Bidirectional smart sync between project and local Antigravity")
     sub_sync.add_argument("--dir", default=os.getcwd(), help="Project directory")
@@ -551,6 +606,12 @@ def main():
     elif args.command == "sync":
         bundle_dir = os.path.abspath(args.bundle) if args.bundle else default_export_dir
         sync_chats(project_dir, bundle_dir, as_json=args.json)
+    elif args.command == "activate":
+        ok = update_ide_active_chat(project_dir, args.cid)
+        if args.json:
+            print(json.dumps({"status": "ok" if ok else "warning", "conversation_id": args.cid, "requires_reload": True}))
+        else:
+            print(f"Conversation {args.cid} set as active. Reload window to display.")
 
 
 if __name__ == "__main__":
