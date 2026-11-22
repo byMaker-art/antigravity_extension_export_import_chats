@@ -1,0 +1,145 @@
+{
+  "name": "antigravity-chat-sync",
+  "displayName": "Antigravity Chat Sync",
+  "description": "Export, import and sync Antigravity IDE conversations across devices and renamed folders.",
+  "version": "1.0.0",
+  "publisher": "bymaker",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/byMaker-art/antigravity_extension_export_import_chats"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravity.exportChats",
+        "title": "Export Project Chats",
+        "category": "Antigravity",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "antigravity.importChats",
+        "title": "Import Project Chats",
+        "category": "Antigravity",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "antigravity.syncChats",
+        "title": "Smart Sync Chats",
+        "category": "Antigravity",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "antigravity.listChats",
+        "title": "Refresh Conversations List",
+        "category": "Antigravity",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "antigravity.openTranscript",
+        "title": "Open Chat Transcript",
+        "category": "Antigravity",
+        "icon": "$(book)"
+      },
+      {
+        "command": "antigravity.checkUpdate",
+        "title": "Check for Extension Updates",
+        "category": "Antigravity",
+        "icon": "$(cloud-download)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "antigravity-sync",
+          "title": "Antigravity Chats",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "antigravity-sync": [
+        {
+          "id": "antigravityChatsView",
+          "name": "Project Conversations"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "antigravity.syncChats",
+          "when": "view == antigravityChatsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "antigravity.exportChats",
+          "when": "view == antigravityChatsView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "antigravity.importChats",
+          "when": "view == antigravityChatsView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "antigravity.listChats",
+          "when": "view == antigravityChatsView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "antigravity.checkUpdate",
+          "when": "view == antigravityChatsView",
+          "group": "navigation@5"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "antigravity.openTranscript",
+          "when": "view == antigravityChatsView",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Antigravity Chat Sync",
+      "properties": {
+        "antigravity.chatSync.autoImportOnOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically check and import chats when opening a project workspace."
+        },
+        "antigravity.chatSync.showStatusBarButtons": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Export / Import / Sync buttons in the bottom status bar."
+        },
+        "antigravity.chatSync.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Path to Python 3 executable on your system."
+        },
+        "antigravity.chatSync.githubRepo": {
+          "type": "string",
+          "default": "byMaker-art/antigravity_extension_export_import_chats",
+          "description": "GitHub repository for extension updates (owner/repo)."
+        },
+        "antigravity.chatSync.autoCheckUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically check for updates from GitHub when starting."
+        }
+      }
+    }
+  }
+}

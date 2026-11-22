@@ -1,0 +1,71 @@
+# ==============================================================================
+# Security & Privacy (Confidential & Personal Data)
+# ==============================================================================
+
+# Private conversation databases, transcripts, logs and brain artifacts
+.antigravity_chats/
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
+readable_transcripts/
+
+# Secrets, tokens, keys and environment variables
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.token
+*credentials*
+*secret*
+id_rsa*
+id_ed25519*
+
+# ==============================================================================
+# Operating System & Cloud Sync Metadata (macOS & iCloud)
+# ==============================================================================
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+*.icloud
+
+# ==============================================================================
+# Python & Virtual Environments
+# ==============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+env/
+ENV/
+
+# ==============================================================================
+# Node.js & Extension Development
+# ==============================================================================
+node_modules/
+dist/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# ==============================================================================
+# IDE Caches & Local History
+# ==============================================================================
+.vscode/*.log
+.vscode/.history/
+*.tmp
+*.swp
+*~
