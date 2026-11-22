@@ -130,6 +130,23 @@ def update_ide_active_chat(project_dir: str, conversation_id: str) -> bool:
     return found
 
 
+def restart_agy_hub_for_project(project_dir: str):
+    """Terminate any running agy hub for project_dir so Antigravity restarts it with updated summaries."""
+    import subprocess
+    try:
+        out = subprocess.check_output(["ps", "aux"], text=True)
+        folder_name = os.path.basename(os.path.abspath(project_dir))
+        for line in out.splitlines():
+            if "agy" in line and "--hub" in line and folder_name in line:
+                parts = line.split()
+                if len(parts) > 1:
+                    pid = int(parts[1])
+                    if pid != os.getpid():
+                        os.kill(pid, 15)
+    except Exception:
+        pass
+
+
 def ensure_gemini_dirs():
     """Ensure ~/.gemini/antigravity subdirectories exist."""
     os.makedirs(CONVERSATIONS_DIR, exist_ok=True)
@@ -480,11 +497,27 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
     conn.commit()
     conn.close()
 
-    # Automatically set the latest imported conversation as active in IDE state
+    # 7. Update agyhub_summaries_proto.pb cache file if exists
+    proto_file = os.path.join(GEMINI_DIR, "agyhub_summaries_proto.pb")
+    if os.path.exists(proto_file) and source_uri and source_uri != target_uri:
+        try:
+            with open(proto_file, "rb") as f:
+                proto_data = f.read()
+            if source_uri.encode("utf-8") in proto_data:
+                updated_proto = replace_protobuf_uri(proto_data, source_uri, target_uri)
+                with open(proto_file, "wb") as f:
+                    f.write(updated_proto)
+        except Exception:
+            pass
+
+    # 8. Automatically set the latest imported conversation as active in IDE state
     active_cid = None
     if conversations:
         active_cid = conversations[-1]["conversation_id"]
         update_ide_active_chat(project_dir, active_cid)
+
+    # 9. Restart background agy hub for project if running to load fresh state
+    restart_agy_hub_for_project(project_dir)
 
     if as_json:
         print(json.dumps({
