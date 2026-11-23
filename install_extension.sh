@@ -4,10 +4,13 @@
 
 set -e
 
-EXT_DIR="$HOME/.antigravity-ide/extensions/bymaker.antigravity-chat-sync-1.0.0"
+VERSION="1.0.1"
+EXT_DIR="$HOME/.antigravity-ide/extensions/bymaker.antigravity-chat-sync-$VERSION"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)/vscode-extension"
 
-echo "=== Installing Antigravity Chat Sync Extension ==="
+echo "=== Installing Antigravity Chat Sync Extension v$VERSION ==="
+# Remove older versions if present
+rm -rf "$HOME/.antigravity-ide/extensions/bymaker.antigravity-chat-sync-"*
 mkdir -p "$EXT_DIR"
 cp -R "$SRC_DIR/"* "$EXT_DIR/"
 cp "$(cd "$(dirname "$0")" && pwd)/antigravity_chat_sync.py" "$EXT_DIR/scripts/antigravity_chat_sync.py"

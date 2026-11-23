@@ -51,44 +51,195 @@ def encode_varint(n: int) -> bytes:
     return bytes(res)
 
 
-def replace_protobuf_uri(blob: bytes, old_uri: str, new_uri: str) -> bytes:
-    """
-    Safely replace a file:// URI inside a protobuf blob, updating
-    the preceding varint string-length prefix if lengths differ.
-    """
-    old_b = old_uri.encode("utf-8")
-    new_b = new_uri.encode("utf-8")
-    if old_b not in blob:
-        return blob
-    if len(old_b) == len(new_b):
-        return blob.replace(old_b, new_b)
-
-    old_len = len(old_b)
-    old_vlen = encode_varint(old_len)
-    new_vlen = encode_varint(len(new_b))
-
-    result = bytearray()
-    idx = 0
+def decode_varint(data: bytes, offset: int):
+    """Decode a varint from data starting at offset."""
+    val = 0
+    shift = 0
+    i = offset
     while True:
-        pos = blob.find(old_b, idx)
-        if pos == -1:
-            result.extend(blob[idx:])
+        if i >= len(data):
+            raise ValueError("Unexpected EOF in varint")
+        b = data[i]
+        i += 1
+        val |= (b & 0x7F) << shift
+        shift += 7
+        if not (b & 0x80):
             break
-        vlen_len = len(old_vlen)
-        if pos >= vlen_len and blob[pos - vlen_len : pos] == old_vlen:
-            result.extend(blob[idx : pos - vlen_len])
-            result.extend(new_vlen)
-            result.extend(new_b)
-            idx = pos + old_len
+    return val, i
+
+
+def parse_proto_fields(data: bytes):
+    """Parse raw protobuf bytes into a list of [field_num, wire_type, payload]."""
+    i = 0
+    fields = []
+    while i < len(data):
+        key, i = decode_varint(data, i)
+        field_num = key >> 3
+        wire_type = key & 0x7
+        if wire_type == 0:
+            val, i = decode_varint(data, i)
+            fields.append([field_num, wire_type, val])
+        elif wire_type == 1:
+            val = data[i : i + 8]
+            i += 8
+            fields.append([field_num, wire_type, val])
+        elif wire_type == 5:
+            val = data[i : i + 4]
+            i += 4
+            fields.append([field_num, wire_type, val])
+        elif wire_type == 2:
+            length, i = decode_varint(data, i)
+            payload = data[i : i + length]
+            i += length
+            fields.append([field_num, wire_type, payload])
         else:
-            result.extend(blob[idx : pos + old_len])
-            idx = pos + old_len
-    return bytes(result)
+            raise ValueError(f"Unsupported wire type {wire_type} at {i}")
+    return fields
+
+
+def serialize_proto_fields(fields) -> bytes:
+    """Serialize a list of [field_num, wire_type, payload] into protobuf bytes."""
+    out = bytearray()
+    for field_num, wire_type, val in fields:
+        key = (field_num << 3) | wire_type
+        out.extend(encode_varint(key))
+        if wire_type == 0:
+            out.extend(encode_varint(val))
+        elif wire_type in (1, 5):
+            out.extend(val)
+        elif wire_type == 2:
+            if isinstance(val, list):
+                sub_bytes = serialize_proto_fields(val)
+                out.extend(encode_varint(len(sub_bytes)))
+                out.extend(sub_bytes)
+            elif isinstance(val, (bytes, bytearray)):
+                out.extend(encode_varint(len(val)))
+                out.extend(val)
+            elif isinstance(val, str):
+                b = val.encode("utf-8")
+                out.extend(encode_varint(len(b)))
+                out.extend(b)
+            else:
+                raise ValueError(f"Unsupported payload type {type(val)}")
+    return bytes(out)
+
+
+def uri_matches(val_bytes: bytes, old_uri: str) -> bool:
+    """Check if binary field contains a match for old_uri (quoted or unquoted)."""
+    try:
+        s = val_bytes.decode("utf-8")
+        old_unquoted = urllib.parse.unquote(old_uri).rstrip("/")
+        s_unquoted = urllib.parse.unquote(s).rstrip("/")
+        return (
+            (old_unquoted == s_unquoted)
+            or (old_unquoted in s_unquoted)
+            or (s_unquoted in old_unquoted and len(s_unquoted) > 10)
+            or (old_uri.rstrip("/") == s.rstrip("/"))
+        )
+    except Exception:
+        return False
+
+
+def update_summary_proto(raw_bytes: bytes, old_uri: str, new_uri: str) -> bytes:
+    """
+    Recursively update workspace URIs inside CascadeTrajectorySummary protobuf.
+    Modifies:
+      - Field 9 (Workspace): Field 1 uri
+      - Field 17 (TrajectoryMetadata): Field 1 (Workspace) Field 1 uri, and Field 7 workspace_uris
+    """
+    new_b = new_uri.encode("utf-8")
+    try:
+        fields = parse_proto_fields(raw_bytes)
+    except Exception:
+        return raw_bytes
+
+    for f in fields:
+        if f[0] == 9 and isinstance(f[2], (bytes, bytearray, list)):
+            sub = parse_proto_fields(f[2]) if not isinstance(f[2], list) else f[2]
+            for sf in sub:
+                if sf[0] == 1 and uri_matches(sf[2], old_uri):
+                    sf[2] = new_b
+            f[2] = sub
+        elif f[0] == 17 and isinstance(f[2], (bytes, bytearray, list)):
+            sub = parse_proto_fields(f[2]) if not isinstance(f[2], list) else f[2]
+            for sf in sub:
+                if sf[0] == 1 and isinstance(sf[2], (bytes, bytearray, list)):
+                    ws_sub = parse_proto_fields(sf[2]) if not isinstance(sf[2], list) else sf[2]
+                    for wsf in ws_sub:
+                        if wsf[0] == 1 and uri_matches(wsf[2], old_uri):
+                            wsf[2] = new_b
+                    sf[2] = ws_sub
+                elif sf[0] == 7 and uri_matches(sf[2], old_uri):
+                    sf[2] = new_b
+            f[2] = sub
+    return serialize_proto_fields(fields)
+
+
+def update_metadata_blob(raw_bytes: bytes, old_uri: str, new_uri: str) -> bytes:
+    """
+    Safely update workspace URIs in TrajectoryMetadata protobuf without breaking field 15.
+    Modifies:
+      - Field 1 (Workspace): Field 1 uri
+      - Field 7: workspace_uris
+    """
+    new_b = new_uri.encode("utf-8")
+    try:
+        fields = parse_proto_fields(raw_bytes)
+    except Exception:
+        return raw_bytes
+
+    for sf in fields:
+        if sf[0] == 1 and isinstance(sf[2], (bytes, bytearray, list)):
+            ws_sub = parse_proto_fields(sf[2]) if not isinstance(sf[2], list) else sf[2]
+            for wsf in ws_sub:
+                if wsf[0] == 1 and uri_matches(wsf[2], old_uri):
+                    wsf[2] = new_b
+            sf[2] = ws_sub
+        elif sf[0] == 7 and uri_matches(sf[2], old_uri):
+            sf[2] = new_b
+    return serialize_proto_fields(fields)
+
+
+def update_agyhub_proto_file(pb_path: str, old_uri: str, new_uri: str):
+    """Update all MapEntry records inside agyhub_summaries_proto.pb cache file."""
+    if not os.path.exists(pb_path):
+        return
+    try:
+        with open(pb_path, "rb") as f:
+            data = f.read()
+        fields = parse_proto_fields(data)
+        changed = False
+        for f in fields:
+            if f[0] == 1 and isinstance(f[2], (bytes, bytearray)):
+                sub = parse_proto_fields(f[2])
+                for sf in sub:
+                    if sf[0] == 2 and isinstance(sf[2], (bytes, bytearray)):
+                        updated = update_summary_proto(sf[2], old_uri, new_uri)
+                        if updated != sf[2]:
+                            sf[2] = updated
+                            changed = True
+                f[2] = sub
+        if changed:
+            with open(pb_path, "wb") as f:
+                f.write(serialize_proto_fields(fields))
+    except Exception:
+        pass
 
 
 def get_project_uri(project_dir: str) -> str:
     """Convert local project directory to Antigravity's workspace URI format."""
     return pathlib.Path(project_dir).resolve().as_uri()
+
+
+def is_uri_match(target_uri: str, candidate_uri: str) -> bool:
+    """Check if target_uri and candidate_uri point to the same workspace."""
+    t1 = target_uri.rstrip("/")
+    c1 = candidate_uri.rstrip("/")
+    if t1 == c1 or t1 in c1 or c1 in t1:
+        return True
+    t2 = urllib.parse.unquote(t1)
+    c2 = urllib.parse.unquote(c1)
+    return t2 == c2 or t2 in c2 or c2 in t2
 
 
 def update_ide_active_chat(project_dir: str, conversation_id: str) -> bool:
@@ -133,16 +284,24 @@ def update_ide_active_chat(project_dir: str, conversation_id: str) -> bool:
 def restart_agy_hub_for_project(project_dir: str):
     """Terminate any running agy hub for project_dir so Antigravity restarts it with updated summaries."""
     import subprocess
+    import signal
     try:
-        out = subprocess.check_output(["ps", "aux"], text=True)
+        target_uri = get_project_uri(project_dir)
+        target_unquoted = urllib.parse.unquote(target_uri)
         folder_name = os.path.basename(os.path.abspath(project_dir))
+
+        out = subprocess.check_output(["ps", "-axww", "-o", "pid,command"], text=True)
         for line in out.splitlines():
-            if "agy" in line and "--hub" in line and folder_name in line:
-                parts = line.split()
-                if len(parts) > 1:
-                    pid = int(parts[1])
-                    if pid != os.getpid():
-                        os.kill(pid, 15)
+            if "agy" in line and "--hub" in line:
+                if folder_name in line or target_uri in line or target_unquoted in line:
+                    parts = line.strip().split()
+                    if parts:
+                        pid = int(parts[0])
+                        if pid != os.getpid():
+                            try:
+                                os.kill(pid, signal.SIGTERM)
+                            except Exception:
+                                pass
     except Exception:
         pass
 
@@ -178,7 +337,7 @@ def list_conversations(project_dir: str, as_json: bool = False):
             uris = json.loads(uris_raw)
         except Exception:
             uris = [uris_raw]
-        if any(target_uri.rstrip("/") in u.rstrip("/") for u in uris):
+        if any(is_uri_match(target_uri, u) for u in uris):
             matched.append({
                 "conversation_id": cid,
                 "title": title or "(Untitled conversation)",
@@ -280,7 +439,7 @@ def export_chats(project_dir: str, export_dir: str, all_chats: bool = False, as_
             uris = json.loads(uris_raw)
         except Exception:
             uris = [uris_raw]
-        if all_chats or any(target_uri.rstrip("/") in u.rstrip("/") for u in uris):
+        if all_chats or any(is_uri_match(target_uri, u) for u in uris):
             target_rows.append(r)
 
     if not target_rows:
@@ -404,6 +563,20 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
         dst_db = os.path.join(CONVERSATIONS_DIR, f"{cid}.db")
         if os.path.exists(src_db):
             safe_sqlite_backup(src_db, dst_db)
+            # Update trajectory_metadata_blob inside conversation DB if workspace changed
+            if source_uri and source_uri != target_uri:
+                try:
+                    cconn = sqlite3.connect(dst_db)
+                    ccur = cconn.cursor()
+                    ccur.execute("SELECT data FROM trajectory_metadata_blob")
+                    m_row = ccur.fetchone()
+                    if m_row and m_row[0]:
+                        updated_meta = update_metadata_blob(m_row[0], source_uri, target_uri)
+                        ccur.execute("UPDATE trajectory_metadata_blob SET data=?", (sqlite3.Binary(updated_meta),))
+                        cconn.commit()
+                    cconn.close()
+                except Exception:
+                    pass
 
         # 2. Restore brain/<id>
         src_brain = os.path.join(export_dir, "brain", cid)
@@ -413,23 +586,15 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
                 shutil.rmtree(dst_brain)
             shutil.copytree(src_brain, dst_brain)
 
-        # 3. Adjust workspace URIs to match current machine and renamed directory
-        orig_uris_raw = conv.get("workspace_uris", "[]")
-        try:
-            orig_uris = json.loads(orig_uris_raw)
-            new_uris = [target_uri if (u == source_uri or source_uri in u) else u for u in orig_uris]
-            if target_uri not in new_uris:
-                new_uris.append(target_uri)
-            conv["workspace_uris"] = json.dumps(new_uris, ensure_ascii=False)
-        except Exception:
-            conv["workspace_uris"] = json.dumps([target_uri], ensure_ascii=False)
+        # 3. Adjust workspace URIs to match current machine and project directory
+        conv["workspace_uris"] = json.dumps([target_uri], ensure_ascii=False)
 
         # 4. Adjust raw_summary protobuf blob
         raw_summary_bytes = None
         if "raw_summary" in conv:
             raw_summary_bytes = deserialize_val(conv["raw_summary"])
             if raw_summary_bytes and source_uri and source_uri != target_uri:
-                raw_summary_bytes = replace_protobuf_uri(raw_summary_bytes, source_uri, target_uri)
+                raw_summary_bytes = update_summary_proto(raw_summary_bytes, source_uri, target_uri)
 
         # 5. Insert/Update conversation_summaries
         c.execute("DELETE FROM conversation_summaries WHERE conversation_id = ?", (cid,))
@@ -487,15 +652,7 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
     # 7. Update agyhub_summaries_proto.pb cache file if exists
     proto_file = os.path.join(GEMINI_DIR, "agyhub_summaries_proto.pb")
     if os.path.exists(proto_file) and source_uri and source_uri != target_uri:
-        try:
-            with open(proto_file, "rb") as f:
-                proto_data = f.read()
-            if source_uri.encode("utf-8") in proto_data:
-                updated_proto = replace_protobuf_uri(proto_data, source_uri, target_uri)
-                with open(proto_file, "wb") as f:
-                    f.write(updated_proto)
-        except Exception:
-            pass
+        update_agyhub_proto_file(proto_file, source_uri, target_uri)
 
     # 8. Automatically set the latest imported conversation as active in IDE state
     active_cid = None
@@ -554,7 +711,7 @@ def sync_chats(project_dir: str, export_dir: str, as_json: bool = False):
             uris = json.loads(uris_raw)
         except Exception:
             uris = [uris_raw]
-        if any(target_uri.rstrip("/") in u.rstrip("/") for u in uris):
+        if any(is_uri_match(target_uri, u) for u in uris):
             local_matched_ids.add(cid)
             if str(lmt) > latest_local_time:
                 latest_local_time = str(lmt)

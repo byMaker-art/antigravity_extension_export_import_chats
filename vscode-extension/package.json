@@ -2,7 +2,7 @@
   "name": "antigravity-chat-sync",
   "displayName": "Antigravity Chat Sync",
   "description": "Export, import and sync Antigravity IDE conversations across devices and renamed folders.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "bymaker",
   "repository": {
     "type": "git",
