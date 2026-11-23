@@ -404,19 +404,6 @@ def import_chats(project_dir: str, export_dir: str, as_json: bool = False):
         dst_db = os.path.join(CONVERSATIONS_DIR, f"{cid}.db")
         if os.path.exists(src_db):
             safe_sqlite_backup(src_db, dst_db)
-            if source_uri and source_uri != target_uri:
-                try:
-                    c_db = sqlite3.connect(dst_db)
-                    cur = c_db.cursor()
-                    cur.execute("SELECT data FROM trajectory_metadata_blob WHERE id = 'main'")
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        updated_traj = replace_protobuf_uri(row[0], source_uri, target_uri)
-                        cur.execute("UPDATE trajectory_metadata_blob SET data = ? WHERE id = 'main'", (sqlite3.Binary(updated_traj),))
-                        c_db.commit()
-                    c_db.close()
-                except Exception:
-                    pass
 
         # 2. Restore brain/<id>
         src_brain = os.path.join(export_dir, "brain", cid)
