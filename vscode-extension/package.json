@@ -2,11 +2,16 @@
   "name": "antigravity-chat-sync",
   "displayName": "Antigravity Chat Sync",
   "description": "Export, import and sync Antigravity IDE conversations across devices and renamed folders.",
-  "version": "1.0.1",
+  "version": "1.1.0",
+  "license": "MIT",
   "publisher": "bymaker",
   "repository": {
     "type": "git",
     "url": "https://github.com/byMaker-art/antigravity_extension_export_import_chats"
+  },
+  "homepage": "https://github.com/byMaker-art/antigravity_extension_export_import_chats#readme",
+  "bugs": {
+    "url": "https://github.com/byMaker-art/antigravity_extension_export_import_chats/issues"
   },
   "engines": {
     "vscode": "^1.90.0"

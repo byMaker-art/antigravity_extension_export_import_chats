@@ -132,6 +132,28 @@ function runSyncScript(args, projectPath, progressMessage) {
 }
 
 /**
+ * Resolve path to an exported readable Markdown transcript for a conversation.
+ */
+function resolveTranscriptPath(projectPath, c) {
+    const dir = path.join(projectPath, '.antigravity_chats', 'readable_transcripts');
+    const candidates = [];
+    if (c.transcript_file) {
+        candidates.push(c.transcript_file);
+    }
+    const rawTitle = (c.title && c.title !== '(Untitled conversation)') ? c.title : c.conversation_id;
+    const unicodeSafe = rawTitle.replace(/[^\p{L}\p{N} ._-]/gu, '_').trim() || c.conversation_id;
+    candidates.push(`${unicodeSafe}.md`, `${c.conversation_id}.md`);
+
+    for (const fileName of candidates) {
+        const fullPath = path.join(dir, fileName);
+        if (fs.existsSync(fullPath)) {
+            return fullPath;
+        }
+    }
+    return null;
+}
+
+/**
  * TreeDataProvider for the Conversations Sidebar View
  */
 class ConversationsProvider {
@@ -178,9 +200,8 @@ class ConversationsProvider {
                 item.conversation = c;
 
                 // Clicking item opens transcript if available
-                const safeTitle = (c.title || c.conversation_id).replace(/[^\w\s.-]/g, '_').trim();
-                const mdPath = path.join(projectPath, '.antigravity_chats', 'readable_transcripts', `${safeTitle}.md`);
-                if (fs.existsSync(mdPath)) {
+                const mdPath = resolveTranscriptPath(projectPath, c);
+                if (mdPath) {
                     item.command = {
                         command: 'vscode.open',
                         title: 'Open Transcript',
@@ -306,14 +327,20 @@ function activate(context) {
             const res = await runSyncScript(['sync'], projectPath, 'Synchronizing Antigravity chats...');
             if (res.status === 'ok') {
                 conversationsProvider.refresh();
-                const choice = await vscode.window.showInformationMessage(
-                    `✓ ${res.message}`,
-                    'Reload Window to Open Chat',
-                    'Later'
-                );
-                if (choice === 'Reload Window to Open Chat') {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                if (res.requires_reload) {
+                    const choice = await vscode.window.showInformationMessage(
+                        `✓ ${res.message}`,
+                        'Reload Window to Open Chat',
+                        'Later'
+                    );
+                    if (choice === 'Reload Window to Open Chat') {
+                        vscode.commands.executeCommand('workbench.action.reloadWindow');
+                    }
+                } else {
+                    vscode.window.showInformationMessage(`✓ ${res.message}`);
                 }
+            } else if (res.status === 'warning') {
+                vscode.window.showWarningMessage(res.message);
             }
         } catch (e) {
             // Error already handled
@@ -358,10 +385,8 @@ function activate(context) {
         const projectPath = getWorkspacePath();
         if (!projectPath) return;
 
-        const c = item.conversation;
-        const safeTitle = (c.title || c.conversation_id).replace(/[^\w\s.-]/g, '_').trim();
-        const mdPath = path.join(projectPath, '.antigravity_chats', 'readable_transcripts', `${safeTitle}.md`);
-        if (fs.existsSync(mdPath)) {
+        const mdPath = resolveTranscriptPath(projectPath, item.conversation);
+        if (mdPath) {
             vscode.workspace.openTextDocument(mdPath).then(doc => vscode.window.showTextDocument(doc));
         } else {
             vscode.window.showInformationMessage(`Transcript not exported yet. Click "Export Chats" first.`);
@@ -371,14 +396,14 @@ function activate(context) {
 
     // Command: Check for Updates
     const checkUpdateCmd = vscode.commands.registerCommand('antigravity.checkUpdate', async () => {
-        const extVersion = context.extension?.packageJSON?.version || '1.0.0';
+        const extVersion = context.extension?.packageJSON?.version || '1.1.0';
         await checkForUpdates(extVersion, false);
     });
     context.subscriptions.push(checkUpdateCmd);
 
     // Auto-check updates on start if enabled
     if (config.get('autoCheckUpdates', true)) {
-        const extVersion = context.extension?.packageJSON?.version || '1.0.0';
+        const extVersion = context.extension?.packageJSON?.version || '1.1.0';
         setTimeout(() => {
             checkForUpdates(extVersion, true).catch(() => {});
         }, 3000);
@@ -391,7 +416,19 @@ function activate(context) {
             const exportDir = path.join(projectPath, '.antigravity_chats');
             if (fs.existsSync(exportDir)) {
                 runSyncScript(['sync'], projectPath, 'Auto-syncing Antigravity chats...')
-                    .then(() => conversationsProvider.refresh())
+                    .then((res) => {
+                        conversationsProvider.refresh();
+                        if (res && res.status === 'ok' && res.requires_reload) {
+                            vscode.window.showInformationMessage(
+                                `✓ ${res.message}`,
+                                'Reload Window to Open Chat'
+                            ).then(choice => {
+                                if (choice === 'Reload Window to Open Chat') {
+                                    vscode.commands.executeCommand('workbench.action.reloadWindow');
+                                }
+                            });
+                        }
+                    })
                     .catch(() => {});
             }
         }

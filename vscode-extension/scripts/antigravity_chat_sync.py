@@ -286,14 +286,14 @@ def restart_agy_hub_for_project(project_dir: str):
     import subprocess
     import signal
     try:
+        target_abs = os.path.abspath(project_dir)
         target_uri = get_project_uri(project_dir)
         target_unquoted = urllib.parse.unquote(target_uri)
-        folder_name = os.path.basename(os.path.abspath(project_dir))
 
         out = subprocess.check_output(["ps", "-axww", "-o", "pid,command"], text=True)
         for line in out.splitlines():
             if "agy" in line and "--hub" in line:
-                if folder_name in line or target_uri in line or target_unquoted in line:
+                if target_abs in line or target_uri in line or target_unquoted in line:
                     parts = line.strip().split()
                     if parts:
                         pid = int(parts[0])
@@ -304,6 +304,12 @@ def restart_agy_hub_for_project(project_dir: str):
                                 pass
     except Exception:
         pass
+
+
+def make_safe_title(title: str, cid: str) -> str:
+    """Create a filesystem-safe filename stem for readable markdown transcripts."""
+    base = title or cid
+    return "".join([ch if ch.isalnum() or ch in " ._-" else "_" for ch in base]).strip() or cid
 
 
 def ensure_gemini_dirs():
@@ -341,6 +347,7 @@ def list_conversations(project_dir: str, as_json: bool = False):
             matched.append({
                 "conversation_id": cid,
                 "title": title or "(Untitled conversation)",
+                "transcript_file": f"{make_safe_title(title, cid)}.md",
                 "step_count": steps,
                 "last_modified_time": str(lmt),
                 "workspace_uris": uris
@@ -493,7 +500,7 @@ def export_chats(project_dir: str, export_dir: str, all_chats: bool = False, as_
                 print(f"  [✓] Copied brain artifacts: {cid[:8]}...")
 
         # 3. Export human-readable Markdown
-        safe_title = "".join([ch if ch.isalnum() or ch in " ._-" else "_" for ch in title]).strip() or cid
+        safe_title = make_safe_title(title, cid)
         md_file = os.path.join(export_dir, "readable_transcripts", f"{safe_title}.md")
         export_readable_markdown(cid, title, md_file)
 
